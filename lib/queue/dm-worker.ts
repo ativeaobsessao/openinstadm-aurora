@@ -67,6 +67,7 @@ const NON_TEMPLATE_REJECTIONS = [
   /outside of allowed window/i,
   /invalid for a private reply/i,
   /requested user cannot be found/i,
+  /An unknown error has occurred/i,
 ];
 
 function isTemplateRejection(error: unknown): boolean {
@@ -788,6 +789,10 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         usage.periodStart
       );
 
+      const isUnrecoverablePrivateReply =
+        error instanceof MetaApiError &&
+        (error.code === 1 || NON_TEMPLATE_REJECTIONS.some((p) => p.test(error.message)));
+
       await prisma.dmLog.update({
         where: {
           automationId_commentId: {
@@ -796,11 +801,17 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           },
         },
         data: {
-          status: "FAILED",
+          status: isUnrecoverablePrivateReply ? "SKIPPED_DEDUP" : "FAILED",
           attempts: job.attemptsMade + 1,
           errorMessage: formatError(error),
         },
       });
+
+      if (isUnrecoverablePrivateReply) {
+        console.log(`[DM Worker] Private reply esgotado para ${commentId} (${formatError(error)}), não vai tentar de novo`);
+        return;
+      }
+
       throw error;
     }
   }
