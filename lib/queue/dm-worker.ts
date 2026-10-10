@@ -212,6 +212,21 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   console.log(`[DM Worker] Comment event: account=${instagramAccountId}, commentId=${commentId}, commenterId=${commenterId}, text="${commentText.slice(0, 100)}"`);
   const requeueAttempt = job.data.requeueAttempt ?? 0;
 
+  // --- FIX ANTI-DUPLICADO GLOBAL - Evita envio massivo ---
+  // Se o Instagram mandar o mesmo commentId 2x (webhook + polling),
+  // o segundo job morre aqui antes de buscar campanhas.
+  const jaEnviado = await prisma.dmLog.findFirst({
+    where: {
+      commentId: commentId,
+      status: { in: ["SENT", "PENDING"] },
+    },
+  });
+  if (jaEnviado) {
+    console.log(`[DM Worker] Comment ${commentId} ja foi enviado como ${jaEnviado.status}, skip global`);
+    return;
+  }
+  // --- FIM DO FIX ---
+
   const automations = await prisma.automation.findMany({
     where: {
       // Match campaigns bound to this specific post, plus any-post campaigns.
@@ -1874,4 +1889,3 @@ export function createDMWorker(): Worker<DmQueueJob> {
 
   return worker;
 }
-
